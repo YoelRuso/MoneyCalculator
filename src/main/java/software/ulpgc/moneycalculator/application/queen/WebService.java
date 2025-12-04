@@ -98,7 +98,7 @@ public class WebService {
 
         @Override
         public ExchangeRate load(Currency from, Currency to) {
-            String cacheKey = from.code() + "-" + to.code();
+            String cacheKey = String.format("%s-%s", from.code(), to.code());
             CachedRate cached = rateCache.get(cacheKey);
             
             if (cached != null && !cached.isExpired()) {
