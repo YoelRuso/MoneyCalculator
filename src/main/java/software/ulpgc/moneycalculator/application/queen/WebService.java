@@ -13,11 +13,12 @@ import java.io.InputStream;
 import java.net.URL;
 import java.net.URLConnection;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class WebService {
     private static final String ApiKey = "aeb1cd5ef6081142040d717f";
@@ -25,18 +26,23 @@ public class WebService {
     private static final Gson GSON = new Gson();
 
     public static class CurrencyLoader implements software.ulpgc.moneycalculator.architecture.io.CurrencyLoader {
-        private static List<Currency> cachedCurrencies = null;
+        private static volatile List<Currency> cachedCurrencies = null;
 
         @Override
         public List<Currency> loadAll() {
             if (cachedCurrencies != null) {
                 return cachedCurrencies;
             }
-            try {
-                cachedCurrencies = readCurrencies();
-                return cachedCurrencies;
-            } catch (IOException e) {
-                return List.of();
+            synchronized (CurrencyLoader.class) {
+                if (cachedCurrencies != null) {
+                    return cachedCurrencies;
+                }
+                try {
+                    cachedCurrencies = readCurrencies();
+                    return cachedCurrencies;
+                } catch (IOException e) {
+                    return List.of();
+                }
             }
         }
 
@@ -87,7 +93,7 @@ public class WebService {
     }
 
     public static class ExchangeRateLoader implements software.ulpgc.moneycalculator.architecture.io.ExchangeRateLoader {
-        private static final Map<String, CachedRate> rateCache = new HashMap<>();
+        private static final Map<String, CachedRate> rateCache = new ConcurrentHashMap<>();
         private static final long CACHE_EXPIRY_HOURS = 1;
 
         @Override
@@ -133,15 +139,15 @@ public class WebService {
 
         private static class CachedRate {
             final ExchangeRate rate;
-            final LocalDate cacheTime;
+            final LocalDateTime cacheTime;
 
             CachedRate(ExchangeRate rate) {
                 this.rate = rate;
-                this.cacheTime = LocalDate.now();
+                this.cacheTime = LocalDateTime.now();
             }
 
             boolean isExpired() {
-                return ChronoUnit.HOURS.between(cacheTime.atStartOfDay(), LocalDate.now().atStartOfDay()) >= CACHE_EXPIRY_HOURS;
+                return ChronoUnit.HOURS.between(cacheTime, LocalDateTime.now()) >= CACHE_EXPIRY_HOURS;
             }
         }
     }
