@@ -67,7 +67,7 @@ public class Desktop extends JFrame {
     }
 
     private Currency[] toArray(List<Currency> currencies) {
-        return currencies.toArray(new Currency[0]);
+        return currencies.toArray(Currency[]::new);
     }
 
     public void addCommand(String name, Command command) {

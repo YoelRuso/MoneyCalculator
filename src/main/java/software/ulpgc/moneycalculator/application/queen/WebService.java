@@ -13,21 +13,36 @@ import java.io.InputStream;
 import java.net.URL;
 import java.net.URLConnection;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class WebService {
     private static final String ApiKey = "aeb1cd5ef6081142040d717f";
-    private static final String ApiUrl = "https://v6.exchangerate-api.com/v6/API-KEY/".replace("API-KEY", ApiKey);
+    private static final String ApiUrl = "https://v6.exchangerate-api.com/v6/" + ApiKey + "/";
+    private static final Gson GSON = new Gson();
 
     public static class CurrencyLoader implements software.ulpgc.moneycalculator.architecture.io.CurrencyLoader {
+        private static volatile List<Currency> cachedCurrencies = null;
 
         @Override
         public List<Currency> loadAll() {
-            try {
-                return readCurrencies();
-            } catch (IOException e) {
-                return List.of();
+            if (cachedCurrencies != null) {
+                return cachedCurrencies;
+            }
+            synchronized (CurrencyLoader.class) {
+                if (cachedCurrencies != null) {
+                    return cachedCurrencies;
+                }
+                try {
+                    cachedCurrencies = readCurrencies();
+                    return cachedCurrencies;
+                } catch (IOException e) {
+                    return List.of();
+                }
             }
         }
 
@@ -64,7 +79,7 @@ public class WebService {
         }
 
         private static JsonObject jsonObjectIn(String json) {
-            return new Gson().fromJson(json, JsonObject.class);
+            return GSON.fromJson(json, JsonObject.class);
         }
 
         private InputStream openInputStream(URLConnection connection) throws IOException {
@@ -72,21 +87,33 @@ public class WebService {
         }
 
         private static URLConnection createConnection() throws IOException {
-            URL url = new URL((ApiUrl + "codes"));
+            URL url = new URL(ApiUrl + "codes");
             return url.openConnection();
         }
     }
 
     public static class ExchangeRateLoader implements software.ulpgc.moneycalculator.architecture.io.ExchangeRateLoader {
+        private static final Map<String, CachedRate> rateCache = new ConcurrentHashMap<>();
+        private static final long CACHE_EXPIRY_HOURS = 1;
+
         @Override
         public ExchangeRate load(Currency from, Currency to) {
+            String cacheKey = String.format("%s-%s", from.code(), to.code());
+            CachedRate cached = rateCache.get(cacheKey);
+            
+            if (cached != null && !cached.isExpired()) {
+                return cached.rate;
+            }
+            
             try {
-                return new ExchangeRate(
+                ExchangeRate rate = new ExchangeRate(
                     LocalDate.now(),
                     from,
                     to,
                     readConversionRate(new URL(ApiUrl + "pair/" + from.code() + "/" + to.code()))
                 );
+                rateCache.put(cacheKey, new CachedRate(rate));
+                return rate;
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
@@ -103,12 +130,25 @@ public class WebService {
         }
 
         private double readConversionRate(String json) {
-            return readConversionRate(new Gson().fromJson(json, JsonObject.class));
+            return readConversionRate(GSON.fromJson(json, JsonObject.class));
         }
 
         private double readConversionRate(JsonObject object) {
             return object.get("conversion_rate").getAsDouble();
         }
 
+        private static class CachedRate {
+            final ExchangeRate rate;
+            final LocalDateTime cacheTime;
+
+            CachedRate(ExchangeRate rate) {
+                this.rate = rate;
+                this.cacheTime = LocalDateTime.now();
+            }
+
+            boolean isExpired() {
+                return ChronoUnit.HOURS.between(cacheTime, LocalDateTime.now()) >= CACHE_EXPIRY_HOURS;
+            }
+        }
     }
 }
